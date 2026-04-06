@@ -1,0 +1,249 @@
+import xml.etree.ElementTree as ET
+from rabochiy import ModbusData  # Замените на имя вашего файла с классом
+
+import openpyxl
+from typing import Dict, Tuple, List, Optional
+
+
+def create_dict_from_excel(file_path: str, str_array,
+                           key_column: int = 7,
+                           value_columns: Tuple[int, int] = (3, 4)) -> Dict[str, Tuple[any, any]]:
+    """
+    Создает словарь на основе совпадений значений из массива с данными в Excel
+
+    Args:
+        file_path: путь к файлу Excel
+        str_array: массив строк для поиска
+        key_column: номер столбца для поиска совпадений (по умолчанию 7)
+        value_columns: кортеж из номеров столбцов для значений (по умолчанию (3, 4))
+
+    Returns:
+        словарь вида {значение_из_массива: (значение_3_столбца, значение_4_столбца)}
+    """
+    # Загружаем Excel файл
+    workbook = openpyxl.load_workbook(file_path, data_only=True)
+    sheet = workbook.active
+
+    # Создаем словарь для результата
+    result_dict = {}
+
+    # Для каждого значения из массива ищем совпадение
+    for search_value in str_array:
+        found = False
+
+        # Проходим по всем строкам в столбце key_column
+        for row in sheet.iter_rows(min_col=key_column, max_col=key_column):
+            cell_value = row[0].value
+
+            # Сравниваем со значением из массива (преобразуем оба к строке для надежности)
+            if cell_value is not None and str(cell_value) == str(search_value):
+                # Получаем значения из 3-го и 4-го столбцов
+                col3_value = sheet.cell(row=row[0].row, column=value_columns[0]).value
+                col4_value = sheet.cell(row=row[0].row, column=value_columns[1]).value
+
+                result_dict[search_value] = (col3_value, col4_value, str_array[search_value][0], str_array[search_value][1])
+                found = True
+                break  # берем первое совпадение (если нужно последнее - уберите break)
+
+        # Если значение не найдено, можно добавить None или пропустить
+        if not found:
+            result_dict[search_value] = (None, None)  # или просто не добавлять
+
+    return result_dict
+
+
+
+
+try:
+    # Укажите путь к вашему файлу
+    with open('C:\\Users\\Ruslan.Osipov\\AppData\\Local\\Programs\\ABAK FC Configurator\\xparams\\xparams_118.xml', 'r',
+              encoding='utf-8') as file:
+        content = file.read()
+
+    # Выведем первые 500 символов, чтобы не засорять консоль
+    print(content[:500])
+
+except FileNotFoundError:
+    print("Файл не найден. Проверьте путь.")
+except Exception as e:
+    print(f"Произошла ошибка: {e}")
+
+tree = ET.parse(r'C:\\Users\\Ruslan.Osipov\\AppData\\Local\\Programs\\ABAK FC Configurator\\xparams\\xparams_118.xml')
+root = tree.getroot()
+
+# Список для хранения отфильтрованных элементов
+filtered_elements = {}
+
+# Проходим по всем элементам
+for elem in root.iter():  # .iter() обходит все элементы
+    attrib = elem.attrib
+    # Проверяем наличие обоих атрибутов
+    if 'hi' in attrib and 'lo' in attrib and attrib.get('tag', 'N/A')[-2:] == "_1":
+        print(f"Найден элемент с hi и lo:")
+        main_value = attrib.get('tag', 'N/A')
+        print(f"  Tag: {main_value}")
+        print(f"  lo: {attrib['lo']}")
+        print(f"  hi: {attrib['hi']}")
+        filtered_elements[main_value] = attrib['lo'], attrib['hi']
+        if 'access' in attrib:
+            print(f"  access: {attrib['access']}")
+        print("-" * 30)
+        #time.sleep(1)
+        #result = client.read_holding_registers(address=modbus_adr, count=1)
+        #if not result.isError():
+        #    print(f"Значение регистра: {result.registers[0]}")  # Вывод [1]
+        #client.close()
+
+result = create_dict_from_excel("C:\\Users\\Ruslan.Osipov\\PycharmProjects\\PamParam\\Копия ModbusMapReport (1).xlsx", filtered_elements)
+
+print(f"Всего найдено: {len(filtered_elements)}")
+
+for key, value, in result.items():
+    print(f"{key}: 3-й столбец = {value[0]}, 4-й столбец = {value[1]}, lo:{value[2]},hi:{value[3]}")
+
+
+def convert_value(value, data_type):
+    """Преобразует значение в зависимости от типа данных"""
+    if isinstance(value, (int, float)):
+        return value
+    if data_type == 'float':
+        return float(value)
+    elif data_type in ['int', 'ulong', 'bmask']:
+        return int(value)
+    else:
+        return value
+
+
+def test_parameter(mb, param_name, param_data):
+    """Тестирование одного параметра"""
+    address, data_type, min_val, max_val = param_data
+
+    # Преобразуем min_val и max_val в числа
+    min_val = convert_value(min_val, data_type)
+    max_val = convert_value(max_val, data_type)
+
+    print(f"\n{'█' * 80}")
+    print(f"█{' ' * 78}█")
+    print(f"█  ТЕСТИРОВАНИЕ: {param_name:<58} █")
+    print(f"█  Адрес: {address} | Тип: {data_type:<40} █")
+    print(f"█  Диапазон: [{min_val}, {max_val}]{' ':<44} █")
+    print(f"█{' ' * 78}█")
+    print(f"{'█' * 80}\n")
+
+    # Читаем текущее значение
+    current_value = mb.read(address, data_type)
+    if data_type == 'float':
+        # Определяем количество знаков после запятой у min_val
+        min_val_str = str(min_val)
+        if '.' in min_val_str:
+            decimal_places = len(min_val_str.split('.')[1])
+        else:
+            decimal_places = 2
+
+        current_value_display = round(current_value, decimal_places)
+        print(f"ТЕКУЩЕЕ значение: {current_value} -> округлено до {decimal_places} знаков: {current_value_display}")
+    else:
+        current_value_display = current_value
+        print(f"ТЕКУЩЕЕ значение: {current_value}")
+
+    # Тестовые значения
+    test_cases = [
+        (min_val, "МИНИМАЛЬНОЕ значение"),
+        (max_val, "МАКСИМАЛЬНОЕ значение"),
+        (min_val - 1, "НИЖЕ минимума на 1"),
+        (max_val + 1, "ВЫШЕ максимума на 1")
+    ]
+
+    for test_val, description in test_cases:
+        print(f"\n{'─' * 60}")
+        print(f"→ {description}")
+        print(f"{'─' * 60}")
+        print(f"Пытаемся записать: {test_val}")
+
+        try:
+            mb.write(address, test_val, data_type)
+            print(f"✓ Запись выполнена")
+
+            # Читаем записанное значение
+            read_val = mb.read(address, data_type)
+
+            if data_type == 'float':
+                # Определяем количество знаков после запятой у test_val
+                test_val_str = str(test_val)
+                if '.' in test_val_str:
+                    decimal_places = len(test_val_str.split('.')[1])
+                else:
+                    decimal_places = 2
+
+                written_rounded = round(test_val, decimal_places)
+                read_rounded = round(read_val, decimal_places)
+
+                print(f"Записано: {test_val} -> округлено до {decimal_places} знаков: {written_rounded}")
+                print(f"Прочитано: {read_val} -> округлено до {decimal_places} знаков: {read_rounded}")
+
+                if written_rounded == read_rounded:
+                    print(f"✓ Значение записалось корректно")
+                else:
+                    print(f"⚠ Прочитанное значение отличается от записанного")
+            else:
+                print(f"Записано: {test_val}")
+                print(f"Прочитано: {read_val}")
+                if test_val == read_val:
+                    print(f"✓ Значение записалось корректно")
+                else:
+                    print(f"⚠ Прочитанное значение отличается от записанного")
+
+        except Exception as e:
+            print(f"✗ Ошибка при записи: {e}")
+
+    # Восстанавливаем исходное значение
+    print(f"\n{'─' * 60}")
+    print(f"→ ВОССТАНОВЛЕНИЕ")
+    print(f"{'─' * 60}")
+    print(f"Восстанавливаем исходное значение: {current_value_display}")
+    try:
+        mb.write(address, current_value, data_type)
+        check_value = mb.read(address, data_type)
+
+        if data_type == 'float':
+            current_val_str = str(current_value)
+            if '.' in current_val_str:
+                decimal_places = len(current_val_str.split('.')[1])
+            else:
+                decimal_places = 2
+
+            check_rounded = round(check_value, decimal_places)
+            print(f"Восстановлено: {check_value} -> округлено до {decimal_places} знаков: {check_rounded}")
+            if current_value_display == check_rounded:
+                print(f"✓ Исходное значение восстановлено")
+            else:
+                print(f"⚠ Исходное значение восстановлено с погрешностью")
+        else:
+            print(f"Восстановлено: {check_value}")
+            if check_value == current_value:
+                print(f"✓ Исходное значение восстановлено")
+            else:
+                print(f"⚠ Исходное значение восстановлено с погрешностью")
+
+    except Exception as e:
+        print(f"✗ Ошибка восстановления: {e}")
+
+    print(f"\n{'█' * 80}\n")
+
+
+# Основная программа
+if __name__ == "__main__":
+    mb = ModbusData("192.168.53.164")
+
+    if mb.connect():
+        print("Подключено к устройству\n")
+
+        for param_name, param_data in result.items():
+            test_parameter(mb, param_name, param_data)
+            if param_name != list(result.keys())[-1]:
+                input("\n⏸ Нажмите Enter для следующего параметра...")
+
+        mb.disconnect()
+        print("\n🏁 РАБОТА ЗАВЕРШЕНА")
+    else:
+        print("❌ Не удалось подключиться к устройству")
